@@ -5,7 +5,8 @@ Deep Q-Networks coded by TensorFlow
 - Python 2.7
 - [gym](https://github.com/openai/gym)
 - [tqdm](https://github.com/tqdm/tqdm)
-- [OpenCV2](http://opencv.org/) or [Scipy](https://www.scipy.org/)
+- [OpenCV2](http://opencv.org/)
+- [TensorFlow](https://www.tensorflow.org/) (current: 1.2.1)
 
 ## Usage
 Train with DQN model described in [[2]](#tf_dqn) (Hyper-parameters are described in main.py):
