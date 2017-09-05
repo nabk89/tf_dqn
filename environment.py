@@ -7,12 +7,13 @@ from time import sleep
 def rgb2gray(image):
 	return np.dot(image[:,:,0:3], [0.2990, 0.5870, 0.1140])
 
-def process_frame(image, size):
+def process_frame(image):
 	#return cv2.resize(rgb2gray(image)/255, size)
-	img = cv2.resize(rgb2gray(image), (84, 110)) # parameter of cv2.resize : width x height (# of cols, # of rows)
-	return img[26:110, :] # In breakout-v0, this region show just game board not including the score board.
+	img = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+	img = cv2.resize(img, (84, 110)) # parameter of cv2.resize : width x height (# of cols, # of rows)
+	return img[26:110, :]/255 # In breakout-v0, this region show just game board not including the score board.
 	
-class Environment():
+class Environment(object):
 	def __init__(self, args):
 		self.args = args
 
@@ -21,7 +22,6 @@ class Environment():
 
 		self.num_actions = self.env.action_space.n
 		self.input_size = list(self.env.observation_space.shape)
-		self.frame_size = (self.args.frame_height, self.args.frame_width)
 	
 	def random_action(self):
 		return self.env.action_space.sample()
@@ -43,18 +43,23 @@ class SimpleEnvironment(Environment):
 
 
 class AtariEnvironment(Environment):
+	def __init__(self, args):
+		super(AtariEnvironment, self).__init__(args)
+		self.input_size = [self.args.frame_height, self.args.frame_width, self.args.state_length]
+
 	def new_episode(self):
 		#if self.env.unwrapped.ale.lives() == 0:
 		#	self.env.reset()
-		self.env.reset()
+		self.frame = self.env.reset()
 		#self.frame, _, _, _ = self.env.step(0) 
 		#self.frame, _, _, _ = self.env.step(self.env.action_space.sample())
-		self.frame, _, _, _ = self.env.step(1)
+		#self.frame, _, _, _ = self.env.step(1)
 		self._render()
-		state = np.zeros([self.args.state_length, self.args.frame_height, self.args.frame_width], dtype=np.float32)
-		self.frame = process_frame(self.frame, self.frame_size)
-		for i in xrange(4):
-			state[i] = self.frame
+		state = np.zeros(self.input_size, dtype=np.float32)
+		self.frame = process_frame(self.frame)
+		state[:,:,self.args.state_length-1] = self.frame
+		#for i in xrange(4):
+		#	state[:,:,i] = self.frame
 		self.lives = self.env.unwrapped.ale.lives()
 		return state
 
@@ -64,22 +69,35 @@ class AtariEnvironment(Environment):
 			#self.env.step(0)
 			self.frame, _, _, _ = self.env.step(self.env.action_space.sample())
 		self._render()
-		state = np.zeros([self.args.state_length, self.args.frame_height, self.args.frame_width], dtype=np.float32)
-		self.frame = process_frame(self.frame, self.frame_size)
-		for i in xrange(4):
-			state[i] = self.frame
+		state = np.zeros(self.input_size, dtype=np.float32)
+		self.frame = process_frame(self.frame)
+		state[:,:,3] = self.frame
+		#for i in xrange(4):
+		#	state[i] = self.frame
 		return state
 
 	def act(self, action):
+		total_reward = 0
 		for _ in xrange(self.args.num_skipping_frames):
 			self.frame, self.reward, self.terminal, _ = self.env.step(action)
-			
+			total_reward += self.reward
+
 			current_lives = self.env.unwrapped.ale.lives()
 			if self.args.train and self.lives>current_lives:
-				self.terminal = True
-			#if self.terminal:
-				self.reward = -1
+				#self.terminal = True
+				#total_reward = -1
+				self.lives = current_lives
+			
+			if self.terminal:
+				#total_reward = -1
 				break
-
+		'''
+		if total_reward == 0:
+			self.reward = 0
+		elif total_reward > 0:
+			self.reward = 1
+		else:
+			self.reward = -1
+		'''
 		self._render()
-		return process_frame(self.frame, self.frame_size), self.reward, self.terminal
+		return process_frame(self.frame), self.reward, self.terminal

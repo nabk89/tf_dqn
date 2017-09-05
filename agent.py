@@ -7,7 +7,7 @@ from dqn import *
 from replay_memory import *
 from environment import *
 
-class Agent:
+class Agent(object):
 	def __init__(self, args, session):
 		self.args = args
 		if self.args.simple:
@@ -26,6 +26,8 @@ class Agent:
 
 	def train(self):
 		episodes_count = 0
+		episode_q = 0
+		episode_qs = []
 		episode_reward = 0
 		episode_rewards = []
 		total_reward = 0
@@ -41,10 +43,17 @@ class Agent:
 		# Synchronize the target network with the main network
 		self.dqn.update_target_network()
 
-		for self.step in tqdm(range(1, self.args.max_step+1), ncols=70, initial=0):
+		self.action_histogram = [0,0,0,0]
+		self.random_histogram = [0,0,0,0]
+		best_r = 0
+		for self.step in xrange(self.args.max_step):
+		#for self.step in tqdm(range(1, self.args.max_step+1), ncols=70, initial=0):
 			# Select an action by epsilon-greedy 
 			action = self.select_action(state)
-			
+		
+			q = self.sess.run(self.dqn.prediction_Q, feed_dict={self.dqn.states: np.reshape(state, [1, 84, 84, 4])})[0]
+			q = q[action]
+
 			if self.args.simple:
 				next_state, reward, terminal = self.env.act(action)
 				if terminal:
@@ -56,13 +65,19 @@ class Agent:
 			else:
 				next_frame, reward, terminal = self.env.act(action)
 				# Make a new state
-				state[0:self.args.state_length-1] = state[1:self.args.state_length]
-				state[self.args.state_length-1] = next_frame
+				state[:,:,0:self.args.state_length-1] = state[:,:,1:self.args.state_length]
+				state[:,:,self.args.state_length-1] = next_frame
 				# Do reward-clipping
 				# this code is not needed in BreakOut-v0
 				#reward = max(self.args.min_reward, max(self.args.max_reward, reward))
 				# Save trasition in the replay memory
 				self.memory.add(action, reward, terminal, next_frame)
+
+			episode_q += q
+			episode_reward += reward
+			if terminal:
+				if reward != -1:
+					print("reward: %d"%(reward))
 
 			# Periodically update main network and target network
 			if self.step >= self.args.training_start_step:
@@ -79,23 +94,32 @@ class Agent:
 			
 				#if self.step % 299 == 0:
 				#	self.args.display = False
+				
+				if terminal:
+					print('At step: %d, loss: %.4f, reward: %d, q: %.4f, best reward: %d /'%(self.step, total_loss, episode_reward, episode_q, best_r) + " " + str(self.action_histogram) + " "+ str(self.random_histogram))
+					self.action_histogram = [0,0,0,0]	
+					self.random_histogram = [0,0,0,0]
 
-				if self.step % self.args.show_freq == 0:
-					avg_r = np.mean(episode_rewards)
-					max_r = np.max(episode_rewards)
-					min_r = np.min(episode_rewards)
-					print('\ntotal_loss: %f, avg_r: %.4f, max_r: %.4f, min_r: %.4f, steps: %d, episodes: %d'%(total_loss, avg_r, max_r, min_r, self.step, len(episode_rewards)))
-					episode_rewards = []
-					total_loss = 0
-					
+				#if self.step % self.args.show_freq == 0:
+				#	avg_r = np.mean(episode_rewards)
+				#	max_r = np.max(episode_rewards)
+				#	min_r = np.min(episode_rewards)
+				#	print('\ntotal_loss: %f, avg_r: %.4f, max_r: %.4f, min_r: %.4f, steps: %d, episodes: %d'%(total_loss, avg_r, max_r, min_r, self.step, len(episode_rewards)))
+				#	episode_rewards = []
+				#	total_loss = 0
+			
 			if terminal:
+				#print('At step: %d, loss: %f, reward: %d, q: %d'%(self.step, total_loss, episode_reward, episode_q))
+				if episode_reward > best_r:
+					best_r = episode_reward
 				episodes_count += 1
+				episode_qs.append(episode_q)
 				episode_rewards.append(episode_reward)
+				episode_q = 0
 				episode_reward = 0
+				total_loss = 0
 				# state = self.env.new_episode_rnadome_start()
 				state = self.env.new_episode()
-			else:
-				episode_reward += reward
 			'''
 			if self.step >= self.args.training_start_step:
 				if self.step % self.config.test_step == self.config.test_step -1:
@@ -111,23 +135,30 @@ class Agent:
 						% (avg_reward, avg_loss, max_reward, min_reward, mean_reward, episodes_count))
 			'''
 	
-	def select_action(self, state, test_epsilon=None):
-		if test_epsilon == None:
-			#epsilon = max(self.args.eps_min, self.args.eps_init - self.step/self.args.max_step)
-			temp_eps = self.eps - (self.args.eps_init - self.args.eps_min) / self.args.final_exploration_frame
-			self.eps = max(temp_eps, self.args.eps_min)
+	def select_action(self, state):
+		if self.args.train:
+			self.eps = np.max([self.args.eps_min, self.args.eps_init - (self.args.eps_init - self.args.eps_min)*(float(self.step)/float(self.args.final_exploration_frame))])
 		else:
-			self.eps = test_epsilon
-		if random.random() < self.eps:
+			self.eps = self.args.eps_test
+		if np.random.rand() < self.eps:
 			action = self.env.random_action()
+			self.random_histogram[action] += 1
 		else:
-			action = np.argmax(self.dqn.predict_Q(state))
+			q = self.dqn.predict_Q(state)
+			action_candidate = np.argwhere(q == np.max(q))
+			if len(action_candidate) > 1:
+				action = action_candidate[np.random.randint(0,len(action_candidate))][0]
+			#action = np.argmax(self.dqn.predict_Q(state))
+			else:
+				action = action_candidate[0][1]
+			#print str(q) + " " + str(np.max(q)) + " " + str(action) + " " + str(action_candidate)
+			self.action_histogram[action] += 1
 		return action
 
-	def play(self, num_step=500, num_episode=10, test_eps=None, render=False):
+	def play(self, num_episode=10, test_eps=None, render=False):
 		if test_eps == None:
 			#test_eps = self.args.eps_min
-			test_eps = 0
+			test_eps = 0.05
 		if not self.load():
 			exit()
 
@@ -137,9 +168,10 @@ class Agent:
 			state = self.env.new_episode()
 			current_reward = 0
 
-			for t in tqdm(range(num_step), ncols=70):
+			terminal = False
+			while terminal == False:	
 				# Select an action by epsilon-greedy 
-				action = self.select_action(state, test_eps)
+				action = self.select_action(state)
 
 				# Act 
 				next_frame, reward, terminal = self.env.act(action)
@@ -153,20 +185,19 @@ class Agent:
 						reward = 1
 						current_reward += reward
 				else:
-					state[0:self.args.state_length-1] = state[1:self.args.state_length]
-					state[self.args.state_length-1] = next_frame
+					state[:,:,0:self.args.state_length-1] = state[:,:,1:self.args.state_length]
+					state[:,:,self.args.state_length-1] = next_frame
+					current_reward += reward
 					if terminal:
 						break
-					else:
-						current_reward += reward
 				
 			if current_reward > best_reward:
 				best_reward = current_reward
 				best_episode = episode
 
-			print("="*30)
-			print("<%d> Current best reward: %d (%dth episode)" % (episode, best_reward, best_episode))
-			print("="*30)
+			print("<%d> Current reward: %d" % (episode, current_reward))
+		print("="*30)
+		print("Best reward: %d (%d episode)" % (best_reward, best_episode))
 
 	@property
 	def model_dir(self):

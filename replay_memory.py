@@ -1,7 +1,7 @@
 import random, os, time
 import numpy as np
 
-class SimpleMemory:
+class SimpleMemory(object):
 	def __init__(self, args, environment):
 		self.args = args
 		self.memory_size = self.args.memory_size
@@ -44,20 +44,20 @@ class SimpleMemory:
 		return self.prestates, actions, rewards, terminals, self.poststates
 
 
-class ReplayMemory:
+class ReplayMemory(object):
 	def __init__(self, args):
 		self.args = args
 		self.memory_size = self.args.memory_size
 		self.count = 0
 		self.current = 0
 		
-		self.frames = np.empty((self.memory_size, args.frame_height, args.frame_width), dtype=np.float16)
+		self.frames = np.empty((self.memory_size, self.args.frame_height, self.args.frame_width), dtype=np.float16)
 		self.actions = np.empty(self.memory_size, dtype=np.uint8)
 		self.rewards = np.empty(self.memory_size, dtype=np.integer)
 		self.terminals = np.empty(self.memory_size, dtype=np.bool)
 
-		self.current_states = np.empty((self.args.batch_size, self.args.state_length, self.args.frame_height, self.args.frame_width), dtype=np.float16)
-		self.next_states = np.empty((self.args.batch_size, self.args.state_length, self.args.frame_height, self.args.frame_width), dtype=np.float16)
+		self.current_states = np.empty((self.args.batch_size, self.args.frame_height, self.args.frame_width, self.args.state_length), dtype=np.float16)
+		self.next_states = np.empty((self.args.batch_size, self.args.frame_height, self.args.frame_width, self.args.state_length), dtype=np.float16)
 
 	def add(self, action, reward, terminal, next_frame):
 		self.frames[self.current] = next_frame
@@ -68,7 +68,9 @@ class ReplayMemory:
 		self.current = (self.current + 1) % self.memory_size
 
 	def _make_state(self, frame_idx):
-		state = self.frames[(frame_idx - self.args.state_length + 1):(frame_idx+1)]
+		state = np.empty([self.args.frame_height, self.args.frame_width, self.args.state_length], dtype=np.float16)
+		for i in xrange(self.args.state_length):
+			state[:,:,i] = self.frames[frame_idx - self.args.state_length + 1 + i]
 
 	def mini_batch(self):
 		batch_indices = []
