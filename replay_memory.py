@@ -1,94 +1,80 @@
-import random, os, time
 import numpy as np
 
-class SimpleMemory(object):
-	def __init__(self, args, environment):
+class ReplayMemory(object):
+	def __init__(self, args, frame_shape):
 		self.args = args
-		self.memory_size = self.args.memory_size
-		self.env = environment
+		self.frame_shape = frame_shape
 		self.count = 0
 		self.current = 0
-		
-		self.states = np.empty([self.memory_size] + self.env.input_size, dtype=np.float16)
-		self.actions = np.empty(self.memory_size, dtype=np.uint8)
-		self.rewards = np.empty(self.memory_size, dtype=np.integer)
-		self.terminals = np.empty(self.memory_size, dtype=np.bool)
 
-		self.prestates = np.empty([self.args.batch_size] + self.env.input_size, dtype=np.float16)
-		self.poststates = np.empty([self.args.batch_size] + self.env.input_size, dtype=np.float16)
+		self.actions = np.empty(self.args.memory_size, dtype=np.uint8)
+		self.rewards = np.empty(self.args.memory_size, dtype=np.uint8)
+		self.terminals = np.empty(self.args.memory_size, dtype=np.bool)
+		self.next_frames = np.empty([self.args.memory_size] + self.frame_shape, dtype=np.float32)
 
-	def add(self, action, reward, terminal, next_state):
+	def add(self, action, reward, terminal, next_frame):
 		self.actions[self.current] = action
 		self.rewards[self.current] = reward
 		self.terminals[self.current] = terminal
-		self.states[self.current] = next_state
-		self.count = max(self.count, self.current + 1)
-		self.current = (self.current + 1) % self.memory_size
+		self.next_frames[self.current] = next_frame
+		self.count = max(self.count, self.current+1)
+		self.current = (self.current+1) % self.args.memory_size
+
+class SimpleMemory(ReplayMemory):
+	def __init__(self, args, frame_shape):
+		super(SimpleMemory, self).__init__(args, frame_shape)
+		self.prestates = np.empty([self.args.batch_size] + self.frame_shape, dtype=np.float32)
+		self.poststates = np.empty([self.args.batch_size] + self.frame_shape, dtype=np.float32)
 
 	def mini_batch(self):
 		batch_indices = []
 		while len(batch_indices) < self.args.batch_size:
 			while True:
-				idx = random.randint(self.args.state_length-1, self.count-1)
-				if idx == self.current+1:
+				idx = np.random.randint(low=1, high=self.count)
+				if idx == self.current: 
+					# (current-1) memory is not related to (current) memory.
 					continue
-				if self.terminals[idx-1]: #or self.terminals[idx]:
+				if self.terminals[idx-1]: 
+					# (idx) terminal memory is not related to (idx+1) memory.
+					# (idx+1) memory is included in a new episode.
 					continue
 				break
-			self.prestates[len(batch_indices)] = self.states[idx-1]
-			self.poststates[len(batch_indices)] = self.states[idx]
+			self.prestates[len(batch_indices)] = self.next_frames[idx-1]
+			self.poststates[len(batch_indices)] = self.next_frames[idx]
 			batch_indices.append(idx)
 		actions = self.actions[batch_indices]
 		rewards = self.rewards[batch_indices]
 		terminals = self.rewards[batch_indices]
 		return self.prestates, actions, rewards, terminals, self.poststates
 
-
-class ReplayMemory(object):
-	def __init__(self, args):
-		self.args = args
-		self.memory_size = self.args.memory_size
-		self.count = 0
-		self.current = 0
-		
-		self.frames = np.empty((self.memory_size, self.args.frame_height, self.args.frame_width), dtype=np.float16)
-		self.actions = np.empty(self.memory_size, dtype=np.uint8)
-		self.rewards = np.empty(self.memory_size, dtype=np.integer)
-		self.terminals = np.empty(self.memory_size, dtype=np.bool)
-
-		self.current_states = np.empty((self.args.batch_size, self.args.frame_height, self.args.frame_width, self.args.state_length), dtype=np.float16)
-		self.next_states = np.empty((self.args.batch_size, self.args.frame_height, self.args.frame_width, self.args.state_length), dtype=np.float16)
-
-	def add(self, action, reward, terminal, next_frame):
-		self.frames[self.current] = next_frame
-		self.actions[self.current] = action
-		self.rewards[self.current] = reward
-		self.terminals[self.current] = terminal
-		self.count = max(self.count, self.current+1)
-		self.current = (self.current + 1) % self.memory_size
+class AtariMemory(ReplayMemory):
+	def __init__(self, args, frame_shape):
+		super(AtariMemory, self).__init__(args, frame_shape)
+		self.state_shape = self.frame_shape + [self.args.state_length]
+		self.prestates = np.empty([self.args.batch_size] + self.state_shape, dtype=np.float32)
+		self.poststates = np.empty([self.args.batch_size] + self.state_shape, dtype=np.float32)
 
 	def _make_state(self, frame_idx):
-		state = np.empty([self.args.frame_height, self.args.frame_width, self.args.state_length], dtype=np.float16)
+		state = np.empty(self.state_shape, dtype=np.float32)
 		for i in xrange(self.args.state_length):
-			state[:,:,i] = self.frames[frame_idx - self.args.state_length + 1 + i]
+			state[:,:,i] = self.next_frames[frame_idx - self.args.state_length + 1 + i]
 
 	def mini_batch(self):
 		batch_indices = []
 		while len(batch_indices) < self.args.batch_size:
 			while True:
-				frame_idx = random.randint(self.args.state_length-1, self.count-1)
-				if frame_idx >= self.current and frame_idx-self.args.state_length < self.current:
+				idx = np.random.randint(low=self.args.state_length-1, high=self.count)
+				if idx >= self.current and idx <= self.current + self.args.state_length-1:
+					# There is the startpoint of a new episode in this range
 					continue
-				if self.terminals[(frame_idx - self.args.state_length):frame_idx-1].any():
+				if self.terminals[(idx - self.args.state_length):idx-1].any():
 					continue
 				break
-			self.current_states[len(batch_indices)] = self._make_state(frame_idx-1)
-			self.next_states[len(batch_indices)] = self._make_state(frame_idx)
-			batch_indices.append(frame_idx)
-
+			self.prestates[len(batch_indices)] = self._make_state(idx-1)
+			self.poststates[len(batch_indices)] = self._make_state(idx)
+			batch_indices.append(idx)
 		actions = self.actions[batch_indices]
 		rewards = self.rewards[batch_indices]
 		terminals = self.terminals[batch_indices]
-
-		return self.current_states, actions, rewards, terminals, self.next_states
+		return self.prestates, actions, rewards, terminals, self.poststates
 			

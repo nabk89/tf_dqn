@@ -1,5 +1,5 @@
-import random, time, os
-import numpy as npi
+import os, time
+import numpy as np
 from tqdm import tqdm
 import tensorflow as tf
 
@@ -10,74 +10,51 @@ from environment import *
 class Agent(object):
 	def __init__(self, args, session):
 		self.args = args
-		if self.args.simple:
-			self.env = SimpleEnvironment(args)
-			self.memory = SimpleMemory(args, self.env)
-		else:
-			self.env = AtariEnvironment(args)
-			self.memory = ReplayMemory(args)
-
 		self.sess = session
 		self.dqn = DQN(self.args, self.sess, self.memory, self.env)
 
-		self.sess.run(tf.global_variables_initializer())
-
 		self.saver = tf.train.Saver()
-
-	def train(self):
-		episodes_count = 0
-		episode_q = 0
-		episode_qs = []
-		episode_reward = 0
-		episode_rewards = []
-		total_reward = 0
-		total_loss = 0
-
-		self.eps = self.args.eps_init
-
-		# Start the first episode
-		print('Start Training...')
-		# state = self.env.new_epdisode_random_start()
-		state = self.env.new_episode()
-
+		self.sess.run(tf.global_variables_initializer())
+		
 		# Synchronize the target network with the main network
 		self.dqn.update_target_network()
 
-		self.action_histogram = [0,0,0,0]
-		self.random_histogram = [0,0,0,0]
-		best_r = 0
+		# Seed of the random number generator
+		np.random.seed(int(time.time()))
+
+	def train(self):
+		episodes_count = 0
+		best_reward = 0
+		episode_reward = 0
+		episode_rewards = []
+		episode_q = 0
+		total_loss = 0
+		self.action_histogram = [0] * self.env.num_actions
+		self.random_histogram = [0] * self.env.num_actions
+		print('Start Training...')
+
+		self.reset_episode()
 		for self.step in xrange(self.args.max_step):
 		#for self.step in tqdm(range(1, self.args.max_step+1), ncols=70, initial=0):
 			# Select an action by epsilon-greedy 
-			action = self.select_action(state)
+			action = self.select_action(self.state)
+			if not self.args.simple:
+				q = self.dqn.predict_Q_value(self.state)[0]
+				q = q[action]
+				episode_q += q
 		
-			q = self.sess.run(self.dqn.prediction_Q, feed_dict={self.dqn.states: np.reshape(state, [1, 84, 84, 4])})[0]
-			q = q[action]
+			next_frame, reward, terminal = self.env.act(action)
+			self.memory.add(action, reward, terminal, next_frame)
+			self.process_state(next_frame)
 
-			if self.args.simple:
-				next_state, reward, terminal = self.env.act(action)
-				if terminal:
-					reward = -1
-				else:
-					reward = 0.1
-				self.memory.add(action, reward, terminal, next_state)
-				state = next_state
-			else:
-				next_frame, reward, terminal = self.env.act(action)
-				# Make a new state
-				state[:,:,0:self.args.state_length-1] = state[:,:,1:self.args.state_length]
-				state[:,:,self.args.state_length-1] = next_frame
-				# Do reward-clipping
-				# this code is not needed in BreakOut-v0
-				#reward = max(self.args.min_reward, max(self.args.max_reward, reward))
-				# Save trasition in the replay memory
-				self.memory.add(action, reward, terminal, next_frame)
-
-			episode_q += q
 			episode_reward += reward
 			if terminal:
-				if reward != -1:
-					print("reward: %d"%(reward))
+				episodes_count += 1
+				episode_rewards.append(episode_reward)
+				if episode_reward > best_reward:
+					best_reward = episode_reward
+				episode_reward = 0
+				self.reset_episode()
 
 			# Periodically update main network and target network
 			if self.step >= self.args.training_start_step:
@@ -90,126 +67,83 @@ class Agent(object):
 
 				if self.step % self.args.save_freq == 0:
 					self.save()
-					#self.args.display = True
-			
-				#if self.step % 299 == 0:
-				#	self.args.display = False
 				
-				if terminal:
-					print('At step: %d, loss: %.4f, reward: %d, q: %.4f, best reward: %d /'%(self.step, total_loss, episode_reward, episode_q, best_r) + " " + str(self.action_histogram) + " "+ str(self.random_histogram))
-					self.action_histogram = [0,0,0,0]	
-					self.random_histogram = [0,0,0,0]
-
-				#if self.step % self.args.show_freq == 0:
-				#	avg_r = np.mean(episode_rewards)
-				#	max_r = np.max(episode_rewards)
-				#	min_r = np.min(episode_rewards)
-				#	print('\ntotal_loss: %f, avg_r: %.4f, max_r: %.4f, min_r: %.4f, steps: %d, episodes: %d'%(total_loss, avg_r, max_r, min_r, self.step, len(episode_rewards)))
-				#	episode_rewards = []
-				#	total_loss = 0
-			
-			if terminal:
-				#print('At step: %d, loss: %f, reward: %d, q: %d'%(self.step, total_loss, episode_reward, episode_q))
-				if episode_reward > best_r:
-					best_r = episode_reward
-				episodes_count += 1
-				episode_qs.append(episode_q)
-				episode_rewards.append(episode_reward)
-				episode_q = 0
-				episode_reward = 0
-				total_loss = 0
-				# state = self.env.new_episode_rnadome_start()
-				state = self.env.new_episode()
-			'''
-			if self.step >= self.args.training_start_step:
-				if self.step % self.config.test_step == self.config.test_step -1:
-					avg_reward = total_reward / self.config.test_step
-					total_reward = 0
-					max_reward = np.max(episode_rewards)
-					min_reward = np.min(episode_rewards)
-					mean_reward = np.mean(episode_rewards)
+				'''
+				if self.step % self.args.show_freq == 0:
+					avg_r = np.mean(episode_rewards)
+					max_r = np.max(episode_rewards)
+					min_r = np.min(episode_rewards)
+					print('\ntotal_loss: %f, avg_r: %.4f, max_r: %.4f, min_r: %.4f, # of episodes: %d'%(total_loss, avg_r, max_r, min_r, len(episode_rewards)))
 					episode_rewards = []
-					avg_loss = total_loss / self.config.test_step
 					total_loss = 0
-					print('\navg_r: %.4f, avg_l: %0.6f, max_r: %.4f, min_r: %.4f, mean_r: %.4f, # episodes: %d'\
-						% (avg_reward, avg_loss, max_reward, min_reward, mean_reward, episodes_count))
-			'''
-	
+				'''
+				if terminal:
+					print('[%d ep, %d step] loss: %.4f, q: %.4f, reward: %d (best: %d)'\
+						%(episodes_count, self.step, total_loss, episode_q, episode_rewards[-1], best_reward)\
+						+ str(self.random_histogram) + " " + str(self.action_histogram))
+					total_loss = 0
+					episode_q = 0
+					self.random_histogram = [0] * self.env.num_actions
+					self.action_histogram = [0] * self.env.num_actions
+		
+	def play(self, num_episode=10):			
+		if not self.load():
+			exit()
+
+		best_reward = 0
+		for episode in range(num_episode):
+			self.reset_episode()
+			current_reward = 0
+
+			terminal = False
+			while not terminal:	
+				action = self.select_action(self.state)
+				next_frame, reward, terminal = self.env.act(action)
+				self.process_state(next_frame)
+
+				current_reward += reward
+				if terminal:
+					break
+				
+			if current_reward > best_reward:
+				best_reward = current_reward
+			print("<%d> Current reward: %d" % (episode, current_reward))
+		print("="*30)
+		print("Best reward: %d" % (best_reward))
+
 	def select_action(self, state):
 		if self.args.train:
 			self.eps = np.max([self.args.eps_min, self.args.eps_init - (self.args.eps_init - self.args.eps_min)*(float(self.step)/float(self.args.final_exploration_frame))])
 		else:
 			self.eps = self.args.eps_test
+
 		if np.random.rand() < self.eps:
 			action = self.env.random_action()
 			self.random_histogram[action] += 1
 		else:
-			q = self.dqn.predict_Q(state)
+			#action = np.argmax(self.dqn.predict_Q(state))
+			q = self.dqn.predict_Q_value(state)[0]
 			action_candidate = np.argwhere(q == np.max(q))
 			if len(action_candidate) > 1:
 				action = action_candidate[np.random.randint(0,len(action_candidate))][0]
-			#action = np.argmax(self.dqn.predict_Q(state))
 			else:
-				action = action_candidate[0][1]
-			#print str(q) + " " + str(np.max(q)) + " " + str(action) + " " + str(action_candidate)
+				action = action_candidate[0][0]
 			self.action_histogram[action] += 1
 		return action
 
-	def play(self, num_episode=10, test_eps=None, render=False):
-		if test_eps == None:
-			#test_eps = self.args.eps_min
-			test_eps = 0.05
-		if not self.load():
-			exit()
-
-		best_reward, best_episode = 0, 0
-		for episode in range(num_episode):
-			#state = self.env.new_episode_random_start()
-			state = self.env.new_episode()
-			current_reward = 0
-
-			terminal = False
-			while terminal == False:	
-				# Select an action by epsilon-greedy 
-				action = self.select_action(state)
-
-				# Act 
-				next_frame, reward, terminal = self.env.act(action)
-
-				# Update the state
-				if self.args.simple:
-					state = next_frame
-					if terminal:
-						break
-					else:
-						reward = 1
-						current_reward += reward
-				else:
-					state[:,:,0:self.args.state_length-1] = state[:,:,1:self.args.state_length]
-					state[:,:,self.args.state_length-1] = next_frame
-					current_reward += reward
-					if terminal:
-						break
-				
-			if current_reward > best_reward:
-				best_reward = current_reward
-				best_episode = episode
-
-			print("<%d> Current reward: %d" % (episode, current_reward))
-		print("="*30)
-		print("Best reward: %d (%d episode)" % (best_reward, best_episode))
-
 	@property
 	def model_dir(self):
-		return '{}_{}_batch'.format(self.args.env_name, self.args.batch_size)
-		#return 'CartPole-v1_32_batch'
+		if self.args.load_env_name == None:
+			return '{}_{}_batch'.format(self.args.env_name, self.args.batch_size)
+		else:
+			return '{}_{}_batch'.format(self.args.load_env_name, self.args.batch_size)
 
 	def save(self):
 		checkpoint_dir = os.path.join(self.args.checkpoint_dir, self.model_dir)
 		if not os.path.exists(checkpoint_dir):
 			os.mkdir(checkpoint_dir)
 		self.saver.save(self.sess, os.path.join(checkpoint_dir, str(self.step)))
-		print('\nSave at %d steps' % self.step)
+		print('*** Save at %d steps' % self.step)
 
 	def load(self):
 		print('Loading checkpoint ...')
@@ -223,3 +157,29 @@ class Agent(object):
 		else:
 			print('Fail to find a checkpoint')
 			return False
+
+class SimpleAgent(Agent):
+	def __init__(self, args, sess):
+		self.env = SimpleEnvironment(args)
+		self.memory = SimpleMemory(args, self.env.frame_shape)
+		super(SimpleAgent, self).__init__(args, sess)
+
+	def reset_episode(self):
+		self.state = self.env.new_episode()
+
+	def process_state(self, next_frame):
+		self.state = next_frame
+
+class AtariAgent(Agent):
+	def __init__(self, args, sess):
+		self.env = AtariEnvironment(args)
+		self.memory = AtariMemory(args, self.env.frame_shape)
+		super(AtariAgent, self).__init__(args, sess)
+
+	def reset_episode(self):
+		self.state = np.zeros(self.memory.state_shape, dtype=np.float32)
+		self.state[:,:,self.args.state_length-1] = self.env.new_episode()
+
+	def process_state(self, next_frame):
+		self.state[:, :, 0:self.args.state_length-1] = self.state[:, :, 1:self.args.state_length]
+		self.state[:, :, self.args.state_length-1] = next_frame
