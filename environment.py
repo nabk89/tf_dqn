@@ -44,14 +44,13 @@ class AtariEnvironment(Environment):
 		self.frame_shape = [self.args.frame_height, self.args.frame_width]
 
 	def new_episode(self):
-		#if self.env.unwrapped.ale.lives() == 0:
-		#	self.env.reset()
+		'''
+		if self.env.unwrapped.ale.lives() == 0:
+			self.env.reset()
+		'''
 		self.frame = self.env.reset()
-		#self.frame, _, _, _ = self.env.step(0) 
-		#self.frame, _, _, _ = self.env.step(self.env.action_space.sample())
-		#self.frame, _, _, _ = self.env.step(1)
 		self._render()
-		self.lives = self.env.unwrapped.ale.lives()
+		#self.lives = self.env.unwrapped.ale.lives()
 		return self.process_frame()
 
 	def act(self, action):
@@ -59,28 +58,27 @@ class AtariEnvironment(Environment):
 		for _ in xrange(self.args.num_skipping_frames):
 			self.frame, self.reward, self.terminal, _ = self.env.step(action)
 			total_reward += self.reward
-
+			'''
+			# Uncomment when training with just one life ((ex) Breakout)
 			current_lives = self.env.unwrapped.ale.lives()
 			if self.args.train and self.lives>current_lives:
-				#self.terminal = True
-				#total_reward = -1
+				self.terminal = True
 				self.lives = current_lives
-			
+			'''
 			if self.terminal:
-				#total_reward = -1
 				break
-		'''
 		if total_reward == 0:
-			self.reward = 0
-		elif total_reward > 0:
-			self.reward = 1
-		else:
-			self.reward = -1
-		'''
+			self.reward = 0.0
+		elif total_reward > 0: # positive rewards = 1
+			self.reward = 1.0
+		else: # negative rewards = -1
+			self.reward = -1.0
+
 		self._render()
 		return self.process_frame(), self.reward, self.terminal
 
 	def process_frame(self):
 		self.frame = cv2.cvtColor(self.frame, cv2.COLOR_BGR2GRAY)
-		self.frame = cv2.resize(self.frame, (84, 110)) # parameter of cv2.resize : width x height (# of cols, # of rows)
-		return self.frame[26:110, :]/255 # In breakout-v0, this region show just game board not including the score board.
+		# parameter of cv2.resize : width x height (# of cols, # of rows)
+		self.frame = cv2.resize(self.frame, (84, 110)) 
+		return self.frame[26:110, :]/255.0 # This region show just game board not including the score board.

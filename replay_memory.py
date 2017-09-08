@@ -8,7 +8,7 @@ class ReplayMemory(object):
 		self.current = 0
 
 		self.actions = np.empty(self.args.memory_size, dtype=np.uint8)
-		self.rewards = np.empty(self.args.memory_size, dtype=np.uint8)
+		self.rewards = np.empty(self.args.memory_size, dtype=np.float32)
 		self.terminals = np.empty(self.args.memory_size, dtype=np.bool)
 		self.next_frames = np.empty([self.args.memory_size] + self.frame_shape, dtype=np.float32)
 
@@ -58,6 +58,7 @@ class AtariMemory(ReplayMemory):
 		state = np.empty(self.state_shape, dtype=np.float32)
 		for i in xrange(self.args.state_length):
 			state[:,:,i] = self.next_frames[frame_idx - self.args.state_length + 1 + i]
+		return state
 
 	def mini_batch(self):
 		batch_indices = []
@@ -77,4 +78,3 @@ class AtariMemory(ReplayMemory):
 		rewards = self.rewards[batch_indices]
 		terminals = self.terminals[batch_indices]
 		return self.prestates, actions, rewards, terminals, self.poststates
-			
