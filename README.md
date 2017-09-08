@@ -13,10 +13,6 @@ Train with DQN model described in [[2]](#tf_dqn) (Hyper-parameters are described
 
     $ python main.py
 
-## TODO
-Even though the codes work, it seems there are bugs (training doesn't work well).
-I'm debugging.
-
 ## References
 Papers
 1) [Playing Atari with Deep Reinforcement Learning](http://arxiv.org/abs/1312.5602) 
@@ -25,3 +21,4 @@ Papers
 Implementations
 1) [deep-rl-tensorflow](https://github.com/carpedm20/deep-rl-tensorflow)
 2) [DQN](https://github.com/yjhong89/DQN)
+3) [logger.py code](https://gist.github.com/gyglim/1f8dfb1b5c82627ae3efcfbbadb9f514)
